@@ -18,7 +18,8 @@
 ## 📁 파일 구성
 
 * `combined_courses_final.json`: 전체 강의 정보가 포함된 JSON 데이터
-* `schedule_optimizer.py`: 최적화 알고리즘이 구현된 메인 코드 파일
+* `simulated_anneling.py`: 최적화 알고리즘이 구현된 메인 코드 파일
+* `genetic_algorithms.py`: 유전 알고리즘이 구현된 메인 코드 파일
 
 ---
 
