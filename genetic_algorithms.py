@@ -1,19 +1,23 @@
 import json
 import random
-import math
 from copy import deepcopy
 import os
+from collections import defaultdict
 
 # 요일 매핑
 DAYS = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
 
-# 시간 문자열을 튜플로 변환
-def parse_time_slot_str(time_str):
-    day_char = time_str[0]
-    period = int(time_str[1:])
-    return (DAYS[day_char], period)
+# 시간 문자열 → 튜플 리스트로 변환
+def parse_schedule(schedule_str):
+    day_char = schedule_str[0]
+    rest = schedule_str[1:]
+    if "-" in rest:
+        start, end = map(int, rest.split("-"))
+        return [(DAYS[day_char], p) for p in range(start, end + 1)]
+    else:
+        return [(DAYS[day_char], int(rest))]
 
-# 적합도 평가 함수 (사용자 선호 반영)
+# 사용자 선호 기반 평가 함수
 def evaluate(schedule, preference="공강최대형"):
     occupied = set()
     daily_slots = {i: [] for i in range(7)}
@@ -24,8 +28,7 @@ def evaluate(schedule, preference="공강최대형"):
                 penalty += 10
             else:
                 occupied.add((day, period))
-                if day in daily_slots:
-                    daily_slots[day].append(period)
+                daily_slots[day].append(period)
 
     if preference == "공강최대형":
         for periods in daily_slots.values():
@@ -46,12 +49,12 @@ def evaluate(schedule, preference="공강최대형"):
 
     return penalty
 
-# 유전 알고리즘 구성 요소
+# 유전 알고리즘 요소
 def initialize_population(course_pool, size):
     population = []
     for _ in range(size):
         individual = {
-            name: [parse_time_slot_str(t) for t in random.choice(times)]
+            name: [parse_schedule(schedule)[0] for schedule in random.choice(times)]
             for name, times in course_pool.items()
         }
         population.append(individual)
@@ -59,7 +62,7 @@ def initialize_population(course_pool, size):
 
 def select_parents(population, preference):
     scored = [(evaluate(ind, preference), ind) for ind in population]
-    scored.sort(key=lambda x: x[0])  # 낮을수록 좋음
+    scored.sort(key=lambda x: x[0])
     return [scored[0][1], scored[1][1]]
 
 def crossover(parent1, parent2):
@@ -72,7 +75,7 @@ def mutate(individual, course_pool, mutation_rate=0.1):
     new_ind = deepcopy(individual)
     for key in new_ind:
         if random.random() < mutation_rate:
-            new_ind[key] = [parse_time_slot_str(t) for t in random.choice(course_pool[key])]
+            new_ind[key] = [parse_schedule(schedule)[0] for schedule in random.choice(course_pool[key])]
     return new_ind
 
 def genetic_algorithm(course_pool, preference, generations=100, pop_size=20):
@@ -92,28 +95,63 @@ def genetic_algorithm(course_pool, preference, generations=100, pop_size=20):
 
     return best, best_score
 
-# 메인 실행부
+# 학점 기반 과목 선택
+def select_courses_by_credit_limit(courses, user_grade, max_credits, must_take_codes, already_taken_codes):
+    course_groups = defaultdict(list)
+    for course in courses:
+        course_groups[course["course_code"]].append(course)
+
+    selected = []
+    total_credits = 0
+
+    # 무조건 들어야 하는 과목 먼저 선택
+    for code in must_take_codes:
+        if code in course_groups:
+            selected_course = random.choice(course_groups[code])
+            selected.append(selected_course)
+            total_credits += selected_course['credits']
+
+    # 나머지 과목 중에서 선택
+    sorted_groups = sorted(course_groups.items(), key=lambda g: abs(g[1][0]['year_level'] - user_grade))
+    random.shuffle(sorted_groups)
+
+    for code, group in sorted_groups:
+        if code in must_take_codes or code in already_taken_codes:
+            continue
+        candidate = random.choice(group)
+        if total_credits + candidate['credits'] <= max_credits:
+            selected.append(candidate)
+            total_credits += candidate['credits']
+        if total_credits >= max_credits:
+            break
+
+    return selected
+
+# 실행부
 if __name__ == "__main__":
-    base_dir = os.path.dirname(__file__)
-    json_path = os.path.join(base_dir, "combined_courses_final.json")
-    with open(json_path, "r", encoding="utf-8") as f:
-        raw_courses = json.load(f)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
 
-    user_preference = input("선호 유형을 입력하세요 (공강최대형 / 몰빵형 / 아침회피형): ")
-    user_grade = int(input("본인의 학년을 입력하세요 (예: 1, 2, 3, 4): "))
+    with open(os.path.join(base_dir, "courses.json"), "r", encoding="utf-8") as f:
+        raw_data = json.load(f)
+        raw_courses = raw_data.get("courses", raw_data)
 
-    filtered_courses = [c for c in raw_courses if c.get("grade") == user_grade]
-    backup_courses = [c for c in raw_courses if c.get("grade") != user_grade]
-    random.shuffle(filtered_courses)
-    random.shuffle(backup_courses)
-    final_courses = filtered_courses[:4] + backup_courses[:2]
+    with open(os.path.join(base_dir, "filter.json"), "r", encoding="utf-8") as f:
+        filters = json.load(f)
+        must_take_codes = filters.get("must_take", [])
+        already_taken_codes = filters.get("already_taken", [])
+
+    user_preference = input("선호 유형 (공강최대형 / 몰빵형 / 아침회피형): ").strip()
+    user_grade = int(input("학년 입력 (예: 1, 2, 3, 4): "))
+    user_credit_limit = int(input("희망 학점 (예: 18): "))
+
+    selected_courses = select_courses_by_credit_limit(raw_courses, user_grade, user_credit_limit, must_take_codes, already_taken_codes)
 
     course_pool = {}
-    for course in final_courses:
-        name = f"{course['name']} ({course['code']})"
+    for course in selected_courses:
+        name = f"{course['course_name']} ({course['course_code']}-{course['section']})"
         if name not in course_pool:
             course_pool[name] = []
-        course_pool[name].append(course["times"])
+        course_pool[name].append([course["schedule"]])
 
     best_schedule, cost = genetic_algorithm(course_pool, user_preference)
 
@@ -121,8 +159,8 @@ if __name__ == "__main__":
         day_map = ["월", "화", "수", "목", "금", "토", "일"]
         return [f"{day_map[day]}{period}교시" for day, period in times]
 
+    print("\n✅ 추천 시간표:")
     for name, times in best_schedule.items():
         readable = ', '.join(readable_time(times))
         print(f"{name}: {readable}")
-
-    print(f"총 충돌 점수: {cost}")
+    print(f"\n총 충돌 점수: {cost}")
