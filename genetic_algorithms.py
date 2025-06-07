@@ -1,5 +1,7 @@
 import json
 import random
+import tkinter as tk        # 시각화를 위한 라이브러리 추가
+from tkinter import ttk     # 시각화를 위한 라이브러리 추가
 from copy import deepcopy
 import os
 from collections import defaultdict
@@ -54,7 +56,7 @@ def initialize_population(course_pool, size):
     population = []
     for _ in range(size):
         individual = {
-            name: [parse_schedule(schedule)[0] for schedule in random.choice(times)]
+            name: sum([parse_schedule(schedule) for schedule in random.choice(times)], [])
             for name, times in course_pool.items()
         }
         population.append(individual)
@@ -75,7 +77,7 @@ def mutate(individual, course_pool, mutation_rate=0.1):
     new_ind = deepcopy(individual)
     for key in new_ind:
         if random.random() < mutation_rate:
-            new_ind[key] = [parse_schedule(schedule)[0] for schedule in random.choice(course_pool[key])]
+            new_ind[key] = sum([parse_schedule(schedule) for schedule in random.choice(course_pool[key])], [])
     return new_ind
 
 def genetic_algorithm(course_pool, preference, generations=100, pop_size=20):
@@ -127,6 +129,64 @@ def select_courses_by_credit_limit(courses, user_grade, max_credits, must_take_c
 
     return selected
 
+def draw_schedule_canvas(best_schedule):
+    root = tk.Tk()
+    root.title("추천 시간표 (카카오 스타일)")
+    root.geometry("750x700")
+
+    canvas = tk.Canvas(root, width=750, height=700, bg="white")
+    canvas.pack()
+
+    days = ["월", "화", "수", "목", "금"]
+    day_width = 120
+    hour_height = 45
+    top_margin = 50
+    left_margin = 60
+
+    # 요일 헤더
+    for i, day in enumerate(days):
+        x = left_margin + i * day_width
+        canvas.create_text(x + day_width // 2, 25, text=day, font=("맑은 고딕", 12, "bold"))
+
+    # 교시 선 + 번호
+    for hour in range(1, 13):
+        y = top_margin + (hour - 1) * hour_height
+        canvas.create_text(30, y + hour_height // 2, text=f"{hour}", font=("맑은 고딕", 10))
+        canvas.create_line(left_margin, y, left_margin + day_width * len(days), y, fill="#ddd")
+
+    # 시간표 블럭 그리기
+    for subject, times in best_schedule.items():
+        # (요일, 교시) 리스트를 group by
+        day_slots = {}
+        for day, period in times:
+            if day not in day_slots:
+                day_slots[day] = []
+            day_slots[day].append(period)
+        
+        for day, periods in day_slots.items():
+            periods.sort()
+            # 연속된 교시 블럭만 하나로 묶어서 그림
+            start = periods[0]
+            end = periods[0]
+            for i in range(1, len(periods)):
+                if periods[i] == end + 1:
+                    end = periods[i]
+                else:
+                    draw_block(canvas, subject, day, start, end, left_margin, day_width, top_margin, hour_height)
+                    start = periods[i]
+                    end = periods[i]
+            draw_block(canvas, subject, day, start, end, left_margin, day_width, top_margin, hour_height)
+
+    root.mainloop()
+
+def draw_block(canvas, subject, day, start, end, left_margin, day_width, top_margin, hour_height):
+    x1 = left_margin + day * day_width + 5
+    y1 = top_margin + (start - 1) * hour_height + 2
+    x2 = x1 + day_width - 10
+    y2 = top_margin + end * hour_height - 2
+    canvas.create_rectangle(x1, y1, x2, y2, fill="#ccddff", outline="#444")
+    canvas.create_text((x1 + x2)//2, (y1 + y2)//2, text=subject, font=("맑은 고딕", 10), width=day_width - 20)
+
 # 실행부
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -159,8 +219,10 @@ if __name__ == "__main__":
         day_map = ["월", "화", "수", "목", "금", "토", "일"]
         return [f"{day_map[day]}{period}교시" for day, period in times]
 
-    print("\n✅ 추천 시간표:")
+    print("\n 추천 시간표:")
     for name, times in best_schedule.items():
         readable = ', '.join(readable_time(times))
         print(f"{name}: {readable}")
     print(f"\n총 충돌 점수: {cost}")
+
+    draw_schedule_canvas(best_schedule)
